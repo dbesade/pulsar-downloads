@@ -1,4 +1,4 @@
-name: Bootstrap Public Pulsar Runtime Packages
+name: Publish Public Pulsar Runtime
 
 on:
   workflow_dispatch:
@@ -8,8 +8,8 @@ permissions:
   packages: write
 
 jobs:
-  bootstrap:
-    runs-on: ubuntu-latest
+  publish:
+    runs-on: [self-hosted, linux, x64, pulsar-public-release]
     steps:
       - name: Log in to GHCR
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
@@ -17,23 +17,41 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Bootstrap public runtime package namespaces
+      - name: Publish exact RC13 runtime images
         run: |
           set -euo pipefail
+          candidate=263f04aac3d3a8febced2a2a7a27db17824eb639
           owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
-          docker pull alpine:3.22
-          for role in backend frontend comfyui code-agent seaweedfs; do
-            target="ghcr.io/$owner/pulsar-runtime-$role:bootstrap"
-            docker tag alpine:3.22 "$target"
+          cat > "$RUNNER_TEMP/runtime-images.tsv" <<'EOF'
+          backend|ghcr.io/dbesade/pulsar-rc-backend:263f04aac3d3a8febced2a2a7a27db17824eb639@sha256:4119ca1b3c7971fe9bdbbd1122fae79b37e2c73946e7bd8839e37c3f53bf3a21|4119ca1b3c7971fe9bdbbd1122fae79b37e2c73946e7bd8839e37c3f53bf3a21
+          frontend|ghcr.io/dbesade/pulsar-rc-frontend:263f04aac3d3a8febced2a2a7a27db17824eb639@sha256:ac6362146a7e8588d2e3bdefdeca6e7931f28a04ab92a69d470226a4aafce4f0|ac6362146a7e8588d2e3bdefdeca6e7931f28a04ab92a69d470226a4aafce4f0
+          comfyui|ghcr.io/dbesade/pulsar-rc-comfyui:263f04aac3d3a8febced2a2a7a27db17824eb639@sha256:f57ff654ec00854d3bc364a821ff16b85b17f08e6fe7b96e8be4a44389483b72|f57ff654ec00854d3bc364a821ff16b85b17f08e6fe7b96e8be4a44389483b72
+          code-agent|ghcr.io/dbesade/pulsar-rc-code-agent:263f04aac3d3a8febced2a2a7a27db17824eb639@sha256:11160d01a3d2a717792aaf741601f77feb3677c5c7e07585b9ba21c6fe52f614|11160d01a3d2a717792aaf741601f77feb3677c5c7e07585b9ba21c6fe52f614
+          seaweedfs|ghcr.io/dbesade/pulsar-rc-seaweedfs:263f04aac3d3a8febced2a2a7a27db17824eb639@sha256:70883456b269e61fad7fe9f17617a24f9feaacbe87ab2c327ac4e1302471c352|70883456b269e61fad7fe9f17617a24f9feaacbe87ab2c327ac4e1302471c352
+          EOF
+          : > "$RUNNER_TEMP/public-runtime-images.env"
+          while IFS='|' read -r role source digest; do
+            docker image inspect "$source" >/dev/null
+            target="ghcr.io/$owner/pulsar-runtime-$role:$candidate"
+            docker tag "$source" "$target"
             docker push "$target"
-          done
-      - name: Prove anonymous package access
+            exact="$target@sha256:$digest"
+            docker buildx imagetools inspect "$exact" >/dev/null
+            env_name="$(printf '%s' "$role" | tr '[:lower:]-' '[:upper:]_')_REF"
+            printf '%s=%s\n' "$env_name" "$exact" >> "$RUNNER_TEMP/public-runtime-images.env"
+          done < "$RUNNER_TEMP/runtime-images.tsv"
+      - name: Prove anonymous pulls
         run: |
           set -euo pipefail
-          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
           anonymous_config="$(mktemp -d)"
           trap 'rm -rf "$anonymous_config"' EXIT
-          for role in backend frontend comfyui code-agent seaweedfs; do
-            docker --config "$anonymous_config" pull \
-              "ghcr.io/$owner/pulsar-runtime-$role:bootstrap"
-          done
+          while IFS='=' read -r _ ref; do
+            docker --config "$anonymous_config" pull "$ref"
+          done < "$RUNNER_TEMP/public-runtime-images.env"
+      - name: Upload public runtime references
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pulsar-public-runtime-images-263f04aac3d3a8febced2a2a7a27db17824eb639
+          path: ${{ runner.temp }}/public-runtime-images.env
+          if-no-files-found: error
+          retention-days: 30
