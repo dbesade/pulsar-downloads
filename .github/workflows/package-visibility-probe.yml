@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   publish:
-    runs-on: [self-hosted, linux, x64, pulsar-public-release]
+    runs-on: ubuntu-24.04
     steps:
       - name: Log in to GHCR
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
@@ -40,10 +40,8 @@ jobs:
           : > "$RUNNER_TEMP/public-runtime-images.env"
           while IFS='|' read -r role digest; do
             source="ghcr.io/$owner/pulsar-runtime-$role:$source_candidate@sha256:$digest"
-            docker pull "$source"
             target="ghcr.io/$owner/pulsar-runtime-$role:$candidate"
-            docker tag "$source" "$target"
-            docker push "$target"
+            docker buildx imagetools create --tag "$target" "$source"
             exact="$target@sha256:$digest"
             docker buildx imagetools inspect "$exact" >/dev/null
             env_name="$(printf '%s' "$role" | tr '[:lower:]-' '[:upper:]_')_REF"
@@ -55,7 +53,7 @@ jobs:
           anonymous_config="$(mktemp -d)"
           trap 'rm -rf "$anonymous_config"' EXIT
           while IFS='=' read -r _ ref; do
-            docker --config "$anonymous_config" pull "$ref"
+            docker --config "$anonymous_config" buildx imagetools inspect "$ref" >/dev/null
           done < "$RUNNER_TEMP/public-runtime-images.env"
       - name: Upload public runtime references
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
