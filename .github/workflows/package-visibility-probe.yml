@@ -1,0 +1,25 @@
+name: Package Visibility Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish probe
+        run: |
+          set -euo pipefail
+          docker pull alpine:3.22
+          docker tag alpine:3.22 ghcr.io/dbesade/pulsar-public-probe:${{ github.sha }}
+          docker push ghcr.io/dbesade/pulsar-public-probe:${{ github.sha }}
